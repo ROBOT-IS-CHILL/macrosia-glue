@@ -2,10 +2,11 @@
 
 use itertools::Itertools;
 use std::{
-    alloc::{GlobalAlloc, System}, borrow::Cow, cell::Cell, error::Error, sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering::*},
-        Arc, LazyLock, Mutex, OnceLock, RwLock, TryLockError,
-    }
+    alloc::{GlobalAlloc, System},
+    borrow::Cow,
+    cell::Cell,
+    error::Error,
+    sync::{Arc, LazyLock, Mutex, OnceLock, RwLock, TryLockError},
 };
 
 use macrosia::{regex, Executor, Macro, MacroError, TextMacro, VariableRegistry};
@@ -17,7 +18,7 @@ use gil::AllowThreads;
 
 struct LimitAlloc;
 
-static MEMORY_LIMIT: usize = 2 * 1024 * 1024; // 2 MiB
+static MEMORY_LIMIT: usize = 8 * 1024 * 1024; // 8 MiB
 
 thread_local! {
     static LIMIT_ALLOCATIONS: Cell<bool> = Cell::new(false);
@@ -78,7 +79,8 @@ impl Macro for TilesMacro {
             })
             .collect::<Result<Vec<_>, _>>()
         })??;
-        #[allow(suspicious_double_ref_op)] // somehow cloning the &str resolves lifetime issues. i'm not questioning it
+        #[allow(suspicious_double_ref_op)]
+        // somehow cloning the &str resolves lifetime issues. i'm not questioning it
         queries.dedup_by_key(|(query, _)| query.clone());
         let conn = DB_CONN
             .get()
@@ -106,37 +108,42 @@ impl Macro for TilesMacro {
                         "animated" => 4,
                         "static_character" => 5,
                         "diagonal_tiling" => 6,
-                        _ => return Err(format!("invalid tiling mode: {value}"))?
+                        _ => return Err(format!("invalid tiling mode: {value}"))?,
                     };
                     query_string.push_str(" AND tiling == ?");
                     args.push(rusqlite::types::Value::Integer(tiling_int))
-                },
+                }
                 "source" => {
                     query_string.push_str(" AND source == ?");
                     args.push(rusqlite::types::Value::Text(value.to_string()))
-                },
+                }
                 "tag" => {
                     query_string.push_str(" AND INSTR(tags, ?)");
                     args.push(rusqlite::types::Value::Text(value.to_string()))
-                },
-                v => return Err(format!("invalid query: {v}"))?
+                }
+                v => return Err(format!("invalid query: {v}"))?,
             }
         }
 
         conn.clear_poison();
         let tiles: Vec<String> = {
-            let conn = conn.lock().map_err(|_| "database connection poisoned - this is a bug, please report!")?;
-            let mut query = conn.prepare_cached(&query_string).map_err(|_| "invalid query - was there a null byte in one of the query values?")?;
-            let res = query.query_map(params_from_iter(args), |row| {
-                row.get::<_, String>(0)
-            })
+            let conn = conn
+                .lock()
+                .map_err(|_| "database connection poisoned - this is a bug, please report!")?;
+            let mut query = conn
+                .prepare_cached(&query_string)
+                .map_err(|_| "invalid query - was there a null byte in one of the query values?")?;
+            let res = query
+                .query_map(params_from_iter(args), |row| row.get::<_, String>(0))
                 .map_err(|_| "failed to execute SQL query - this is a bug, please report!")?
-                .collect::<Result<Vec<_>, _>>().map_err(|_| "failed to fetch database row - this is a bug, please report!")?;
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| "failed to fetch database row - this is a bug, please report!")?;
             res
         };
 
         Ok(Cow::Owned(
-            tiles.into_iter()
+            tiles
+                .into_iter()
                 .sorted()
                 .map(|tilename| {
                     tilename
@@ -165,17 +172,17 @@ static EXECUTOR: LazyLock<RwLock<Executor>> = LazyLock::new(|| RwLock::new(Execu
 fn connect_to_db(py: Python, path: String) -> PyResult<()> {
     py.detach(|| {
         DB_CONN
-        .get_or_try_init(|| {
-            Ok(Mutex::new({
-                let conn = Connection::open(path)?;
-                add_regexp_function(&conn)?;
-                conn
-            }))
-        })
-        .map(|_| ())
-        .map_err(|err: rusqlite::Error| -> PyErr {
-            PyAssertionError::new_err(format!("{err}")).into()
-        })
+            .get_or_try_init(|| {
+                Ok(Mutex::new({
+                    let conn = Connection::open(path)?;
+                    add_regexp_function(&conn)?;
+                    conn
+                }))
+            })
+            .map(|_| ())
+            .map_err(|err: rusqlite::Error| -> PyErr {
+                PyAssertionError::new_err(format!("{err}")).into()
+            })
     })
 }
 
@@ -233,7 +240,12 @@ fn update_macros(py: Python) -> PyResult<bool> {
 }
 
 #[pyfunction]
-fn evaluate<'py>(py: Python<'py>, program: String, ctx: u8, step_limit: Option<usize>) -> PyResult<Bound<'py, PyAny>> {
+fn evaluate<'py>(
+    py: Python<'py>,
+    program: String,
+    ctx: u8,
+    step_limit: Option<usize>,
+) -> PyResult<Bound<'py, PyAny>> {
     let pin = Box::pin(async move {
         LIMIT_ALLOCATIONS.set(true);
         let thread = std::thread::spawn(move || -> Result<Option<String>, MacroError> {
@@ -242,14 +254,14 @@ fn evaluate<'py>(py: Python<'py>, program: String, ctx: u8, step_limit: Option<u
             let exec = match EXECUTOR.try_read() {
                 Ok(exec) => exec,
                 Err(TryLockError::WouldBlock) => return Ok(None),
-                Err(_) => return Err("executor is poisoned - this is a bug, please report!")?
+                Err(_) => return Err("executor is poisoned - this is a bug, please report!")?,
             };
             exec.set_context(ctx);
             let mut var_reg = VariableRegistry::new();
             let mut generator = exec.evaluate(program.as_bytes(), &mut var_reg, step_limit);
             loop {
                 let Some(res) = generator() else { continue };
-                break res.map(|v| Some(String::from_utf8_lossy_owned(v.into_owned())))
+                break res.map(|v| Some(String::from_utf8_lossy_owned(v.into_owned())));
             }
         });
         let res = async move { thread.join() }.await;
@@ -257,14 +269,14 @@ fn evaluate<'py>(py: Python<'py>, program: String, ctx: u8, step_limit: Option<u
 
         match res {
             Err(panic_payload) => {
-                if let Some(&"memory limit exhausted") = panic_payload.downcast_ref::<&'static str>() {
+                if let Some(&"memory limit exhausted") =
+                    panic_payload.downcast_ref::<&'static str>()
+                {
                     return Ok(Some((false, "memory limit exhausted during macro execution\ncurrently a backtrace is not possible, this is being worked on".to_string())));
                 }
                 std::panic::resume_unwind(panic_payload)
             }
-            Ok(Err(macro_error)) => {
-                Ok(Some((false, format!("{macro_error}"))))
-            }
+            Ok(Err(macro_error)) => Ok(Some((false, format!("{macro_error}")))),
             Ok(Ok(res)) => Ok(res.map(|r| (true, r))),
         }
     });
@@ -292,10 +304,12 @@ fn macrosia_glue(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(update_macros, m)?)?;
     m.add_function(wrap_pyfunction!(connect_to_db, m)?)?;
     m.add_function(wrap_pyfunction!(get_builtins, m)?)?;
-    m.add("PanicException", <pyo3::panic::PanicException as pyo3::PyTypeInfo>::type_object(m.py()))?;
+    m.add(
+        "PanicException",
+        <pyo3::panic::PanicException as pyo3::PyTypeInfo>::type_object(m.py()),
+    )?;
     Ok(())
 }
-
 
 fn add_regexp_function(db: &Connection) -> rusqlite::Result<()> {
     db.create_scalar_function(
@@ -305,12 +319,14 @@ fn add_regexp_function(db: &Connection) -> rusqlite::Result<()> {
             | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC,
         move |ctx| {
             if ctx.len() != 2 {
-                return Err(rusqlite::Error::InvalidParameterCount(ctx.len(), 2))
+                return Err(rusqlite::Error::InvalidParameterCount(ctx.len(), 2));
             }
-            let regexp: Arc<regex::Regex> = ctx
-                .get_or_create_aux(0, |vr| -> Result<_, Box<dyn Error + Send + Sync + 'static>> {
+            let regexp: Arc<regex::Regex> = ctx.get_or_create_aux(
+                0,
+                |vr| -> Result<_, Box<dyn Error + Send + Sync + 'static>> {
                     Ok(regex::Regex::new(vr.as_str()?)?)
-                })?;
+                },
+            )?;
             let is_match = {
                 let text = ctx
                     .get_raw(1)
