@@ -273,12 +273,15 @@ fn evaluate<'py>(
                 if let Some(&"memory limit exhausted") =
                     panic_payload.downcast_ref::<&'static str>()
                 {
-                    return Ok(Some((false, "memory limit exhausted during macro execution, but not during expansion".to_string())));
+                    return Ok(Some((false, "memory limit exhausted during macro execution, but not during expansion".to_string(), None)));
                 }
                 std::panic::resume_unwind(panic_payload)
             }
-            Ok(Err(macro_error)) => Ok(Some((false, format!("{macro_error}")))),
-            Ok(Ok(res)) => Ok(res.map(|r| (true, r))),
+            Ok(Err(macro_error)) => Ok(Some((false,
+                macro_error.message().to_string(),
+                Some(macro_error.trace().iter().map(|v| String::from_utf8_lossy(v).into_owned()).collect::<Vec<String>>())
+            ))),
+            Ok(Ok(res)) => Ok(res.map(|r| (true, r, None))),
         }
     });
     pyo3_async_runtimes::async_std::future_into_py(py, AllowThreads(pin))
@@ -308,6 +311,10 @@ fn macrosia_glue(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add(
         "PanicException",
         <pyo3::panic::PanicException as pyo3::PyTypeInfo>::type_object(m.py()),
+    )?;
+        m.add(
+        "RustPanic",
+        <pyo3_async_runtimes::err::RustPanic as pyo3::PyTypeInfo>::type_object(m.py()),
     )?;
     Ok(())
 }
