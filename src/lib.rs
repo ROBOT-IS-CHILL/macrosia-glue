@@ -34,6 +34,7 @@ unsafe impl GlobalAlloc for LimitAlloc {
                 LIMIT_ALLOCATIONS.set(false);
                 panic!("memory limit exhausted");
             }
+            ALLOCATED_MEMORY.set(new.unwrap());
         } else {
             ALLOCATED_MEMORY.set(ALLOCATED_MEMORY.get() + layout.size());
         }
@@ -272,7 +273,7 @@ fn evaluate<'py>(
                 if let Some(&"memory limit exhausted") =
                     panic_payload.downcast_ref::<&'static str>()
                 {
-                    return Ok(Some((false, "memory limit exhausted during macro execution\ncurrently a backtrace is not possible, this is being worked on".to_string())));
+                    return Ok(Some((false, "memory limit exhausted during macro execution, but not during expansion".to_string())));
                 }
                 std::panic::resume_unwind(panic_payload)
             }
