@@ -588,6 +588,7 @@ dependencies = [
 [[package]]
 name = "macrosia"
 version = "0.1.0"
+source = "git+https://github.com/ROBOT-IS-CHILL/macrosia.git#efda7b9a37fd2810b1baea789cc22dfac6601336"
 dependencies = [
  "base64",
  "const_format",

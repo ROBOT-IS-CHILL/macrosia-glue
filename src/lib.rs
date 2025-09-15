@@ -9,7 +9,7 @@ use std::{
 };
 
 use macrosia::{regex, Executor, Macro, MacroError, TextMacro, VariableRegistry};
-use pyo3::{exceptions::PyAssertionError, prelude::*, types::{PyDict, PyList}};
+use pyo3::{exceptions::PyAssertionError, prelude::*, types::PyDict};
 use rusqlite::{params_from_iter, Connection};
 
 mod gil;
@@ -167,7 +167,7 @@ static EXECUTOR: LazyLock<RwLock<Executor>> = LazyLock::new(|| RwLock::new(Execu
 
 #[pyfunction]
 fn connect_to_db(py: Python, path: String) -> PyResult<()> {
-    Python.detach(|| {
+    py.detach(|| {
         DB_CONN
         .get_or_try_init(|| {
             Ok(Mutex::new({
@@ -281,8 +281,9 @@ fn get_builtins(py: Python) -> PyResult<Vec<Py<PyAny>>> {
     let mut vec = vec![];
     for mac in exec.macros().values() {
         let dict = PyDict::new(py);
-        dict.set_item("name", String::from_utf8_lossy(mac.name()).into_owned());
-        dict.set_item("description", String::from_utf8_lossy(mac.description()).into_owned());
+        dict.set_item("name", String::from_utf8_lossy(mac.name()).into_owned())?;
+        dict.set_item("description", mac.description().to_string())?;
+        dict.set_item("source", String::from_utf8_lossy(mac.source()).into_owned())?;
         vec.push(dict.into());
     }
     Ok(vec)
