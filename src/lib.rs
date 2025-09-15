@@ -2,7 +2,7 @@
 
 use itertools::Itertools;
 use std::{
-    alloc::{GlobalAlloc, System}, borrow::Cow, error::Error, sync::{
+    alloc::{GlobalAlloc, System}, borrow::Cow, cell::Cell, error::Error, sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering::*},
         Arc, LazyLock, Mutex, OnceLock, RwLock, TryLockError,
     }
@@ -15,45 +15,41 @@ use rusqlite::{params_from_iter, Connection};
 mod gil;
 use gil::AllowThreads;
 
-struct LimitAlloc(AtomicUsize);
-
-static LIMIT_ALLOCATIONS: AtomicBool = AtomicBool::new(false);
+struct LimitAlloc;
 
 static MEMORY_LIMIT: usize = 2 * 1024 * 1024; // 2 MiB
 
+thread_local! {
+    static LIMIT_ALLOCATIONS: Cell<bool> = Cell::new(false);
+    static ALLOCATED_MEMORY: Cell<usize> = Cell::new(0);
+}
+
 unsafe impl GlobalAlloc for LimitAlloc {
     unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
-        if LIMIT_ALLOCATIONS.load(SeqCst) {
-            let mut current = self.0.load(SeqCst);
-            loop {
-                let new = current.checked_add(layout.size());
-                if new.is_none_or(|v| v > MEMORY_LIMIT) {
-                    LIMIT_ALLOCATIONS.store(false, SeqCst);
-                    panic!("memory limit exhausted");
-                }
-                let new = new.unwrap();
-                match self.0.compare_exchange_weak(current, new, SeqCst, SeqCst) {
-                    Ok(_) => break,
-                    Err(x) => current = x,
-                }
+        if LIMIT_ALLOCATIONS.get() {
+            let current = ALLOCATED_MEMORY.get();
+            let new = current.checked_add(layout.size());
+            if new.is_none_or(|v| v > MEMORY_LIMIT) {
+                LIMIT_ALLOCATIONS.set(false);
+                panic!("memory limit exhausted");
             }
         } else {
-            self.0.fetch_add(layout.size(), SeqCst);
+            ALLOCATED_MEMORY.set(ALLOCATED_MEMORY.get() + layout.size());
         }
         let ptr = System.alloc(layout);
         if ptr.is_null() {
-            self.0.fetch_sub(layout.size(), SeqCst);
+            ALLOCATED_MEMORY.set(ALLOCATED_MEMORY.get() - layout.size());
         }
         ptr
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
-        self.0.fetch_sub(layout.size(), SeqCst);
+        ALLOCATED_MEMORY.set(ALLOCATED_MEMORY.get() - layout.size());
         System.dealloc(ptr, layout);
     }
 }
 
 #[global_allocator]
-static ALLOC: LimitAlloc = LimitAlloc(AtomicUsize::new(0));
+static ALLOC: LimitAlloc = LimitAlloc;
 
 static DB_CONN: OnceLock<Mutex<Connection>> = OnceLock::new();
 
@@ -192,7 +188,7 @@ macro_rules! sql_py_err {
 #[pyfunction]
 fn update_macros(py: Python) -> PyResult<bool> {
     py.detach(|| {
-        LIMIT_ALLOCATIONS.store(false, SeqCst);
+        LIMIT_ALLOCATIONS.set(false);
         let Some(db) = DB_CONN.get() else {
             Err(PyAssertionError::new_err(
                 "The SQLite database has not been connected yet! Try again in a few moments.",
@@ -239,8 +235,9 @@ fn update_macros(py: Python) -> PyResult<bool> {
 #[pyfunction]
 fn evaluate<'py>(py: Python<'py>, program: String, ctx: u8, step_limit: Option<usize>) -> PyResult<Bound<'py, PyAny>> {
     let pin = Box::pin(async move {
-        LIMIT_ALLOCATIONS.store(true, SeqCst);
+        LIMIT_ALLOCATIONS.set(true);
         let thread = std::thread::spawn(move || -> Result<Option<String>, MacroError> {
+            LIMIT_ALLOCATIONS.set(true);
             EXECUTOR.clear_poison();
             let exec = match EXECUTOR.try_read() {
                 Ok(exec) => exec,
@@ -256,7 +253,7 @@ fn evaluate<'py>(py: Python<'py>, program: String, ctx: u8, step_limit: Option<u
             }
         });
         let res = async move { thread.join() }.await;
-        LIMIT_ALLOCATIONS.store(true, SeqCst);
+        LIMIT_ALLOCATIONS.set(true);
 
         match res {
             Err(panic_payload) => {
