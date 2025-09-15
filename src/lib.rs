@@ -10,7 +10,7 @@ use std::{
 };
 
 use macrosia::{regex, Executor, Macro, MacroError, TextMacro, VariableRegistry};
-use pyo3::{exceptions::PyAssertionError, prelude::*, types::PyDict};
+use pyo3::{exceptions::PyAssertionError, prelude::*, types::{PyDict, PyList, PyString}};
 use rusqlite::{params_from_iter, Connection};
 
 mod gil;
@@ -246,6 +246,7 @@ fn evaluate<'py>(
     program: String,
     ctx: u8,
     step_limit: Option<usize>,
+    debug_log: Option<Py<PyList>>,
 ) -> PyResult<Bound<'py, PyAny>> {
     let pin = Box::pin(async move {
         LIMIT_ALLOCATIONS.set(true);
@@ -259,9 +260,19 @@ fn evaluate<'py>(
             };
             exec.set_context(ctx);
             let mut var_reg = VariableRegistry::new();
-            let mut generator = exec.evaluate(program.as_bytes(), &mut var_reg, step_limit);
+            let mut debug_vec = vec![];
+            let readout = debug_log.as_ref().map(|_| &mut debug_vec);
+            let mut generator = exec.evaluate(program.as_bytes(), &mut var_reg, step_limit, readout);
             loop {
                 let Some(res) = generator() else { continue };
+                drop(generator);
+                if let Some(log) = debug_log {
+                    Python::attach(|py| {
+                        for str in debug_vec {
+                            log.call_method1(py, "append", (str as String, )).expect("failed to append to debug log");
+                        }
+                    })
+                }
                 break res.map(|v| Some(String::from_utf8_lossy_owned(v.into_owned())));
             }
         });
@@ -284,7 +295,7 @@ fn evaluate<'py>(
             Ok(Ok(res)) => Ok(res.map(|r| (true, r, None))),
         }
     });
-    pyo3_async_runtimes::async_std::future_into_py(py, AllowThreads(pin))
+    pyo3_async_runtimes::async_std::future_into_py(py, pin)
 }
 
 #[pyfunction]
