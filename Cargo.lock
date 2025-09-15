@@ -283,7 +283,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -587,8 +587,8 @@ dependencies = [
 
 [[package]]
 name = "macrosia"
-version = "0.1.0"
-source = "git+https://github.com/ROBOT-IS-CHILL/macrosia.git#215ad577952f8a5bd3d5907cde56b13a98642087"
+version = "0.1.1"
+source = "git+https://github.com/ROBOT-IS-CHILL/macrosia.git#05fb0781bccc4bacde8ea44e6c26d7a95fbad5c4"
 dependencies = [
  "base64",
  "const_format",
@@ -604,7 +604,7 @@ dependencies = [
 
 [[package]]
 name = "macrosia-glue"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-std",
  "itertools",
@@ -927,7 +927,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
