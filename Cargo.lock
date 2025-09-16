@@ -587,8 +587,8 @@ dependencies = [
 
 [[package]]
 name = "macrosia"
-version = "0.1.3"
-source = "git+https://github.com/ROBOT-IS-CHILL/macrosia.git#5888a7f2f21aee33d7f64e4ea179fdbb7d25e9e0"
+version = "0.1.5"
+source = "git+https://github.com/ROBOT-IS-CHILL/macrosia.git#9aa95ae3a63aff7abe635b4926152e711f9488f7"
 dependencies = [
  "base64",
  "const_format",
@@ -599,6 +599,7 @@ dependencies = [
  "regex",
  "seahash",
  "stacker",
+ "thread_local",
  "web-time",
 ]
 
@@ -998,6 +999,15 @@ name = "target-lexicon"
 version = "0.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df7f62577c25e07834649fc3b39fafdc597c0a3527dc1c60129201ccfcbaa50c"
+
+[[package]]
+name = "thread_local"
+version = "1.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f60246a4944f24f6e018aa17cdeffb7818b76356965d03b07d6a9886e8962185"
+dependencies = [
+ "cfg-if",
+]
 
 [[package]]
 name = "unicode-ident"
