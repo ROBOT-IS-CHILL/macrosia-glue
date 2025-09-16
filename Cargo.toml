@@ -19,3 +19,4 @@ itertools = "0.14"
 
 [profile.release]
 debug = true
+panic = "unwind"
