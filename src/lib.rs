@@ -6,7 +6,7 @@ use std::{
     borrow::Cow,
     cell::Cell,
     error::Error,
-    sync::{Arc, LazyLock, Mutex, OnceLock, RwLock, TryLockError},
+    sync::{atomic::{AtomicBool, Ordering}, Arc, LazyLock, Mutex, OnceLock, RwLock, TryLockError}, time::Duration,
 };
 
 use macrosia::{regex, Executor, Macro, MacroError, TextMacro, VariableRegistry};
@@ -245,11 +245,14 @@ fn evaluate<'py>(
     py: Python<'py>,
     program: String,
     ctx: u8,
+    timeout: f64,
     step_limit: Option<usize>,
     debug_log: Option<Py<PyList>>,
 ) -> PyResult<Bound<'py, PyAny>> {
     let pin = Box::pin(async move {
         LIMIT_ALLOCATIONS.set(true);
+        static KILL: AtomicBool = AtomicBool::new(false);
+        KILL.store(false, Ordering::SeqCst);
         let thread = std::thread::spawn(move || -> Result<Option<String>, MacroError> {
             LIMIT_ALLOCATIONS.set(true);
             EXECUTOR.clear_poison();
@@ -262,9 +265,9 @@ fn evaluate<'py>(
             let mut var_reg = VariableRegistry::new();
             let mut debug_vec = vec![];
             let readout = debug_log.as_ref().map(|_| &mut debug_vec);
-            let mut generator = exec.evaluate(program.as_bytes(), &mut var_reg, step_limit, readout);
+            let mut generator = exec.evaluate(program.as_bytes(), &mut var_reg, step_limit, readout, &KILL);
             loop {
-                let Some(res) = generator() else { continue };
+                let Some(res) = generator() else {continue};
                 drop(generator);
                 if let Some(log) = debug_log {
                     Python::attach(|py| {
@@ -276,6 +279,7 @@ fn evaluate<'py>(
                 break res.map(|v| Some(String::from_utf8_lossy_owned(v.into_owned())));
             }
         });
+        std::thread::spawn(move || { std::thread::sleep(Duration::from_secs_f64(timeout)); KILL.store(true, Ordering::Relaxed) });
         let res = async move { thread.join() }.await;
         LIMIT_ALLOCATIONS.set(true);
 
