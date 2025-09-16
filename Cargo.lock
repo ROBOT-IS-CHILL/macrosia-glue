@@ -587,8 +587,9 @@ dependencies = [
 
 [[package]]
 name = "macrosia"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
+ "aho-corasick",
  "base64",
  "const_format",
  "flate2",
