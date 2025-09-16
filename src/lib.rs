@@ -264,7 +264,7 @@ fn evaluate<'py>(
             let mut var_reg = VariableRegistry::new();
             let mut debug_vec = vec![];
             let readout = debug_log.as_ref().map(|_| &mut debug_vec);
-            let mut generator = exec.evaluate(program.as_bytes(), &mut var_reg, readout, &KILL);
+            let mut generator = exec.evaluate(program.as_bytes(), &mut var_reg, None, readout, &KILL);
             loop {
                 let Some(res) = generator() else {continue};
                 drop(generator);
@@ -324,7 +324,7 @@ fn evaluate_sync<'py>(
         let mut debug_vec = vec![];
         let readout = debug_log.as_ref().map(|_| &mut debug_vec);
         static _DUMMY: AtomicBool = AtomicBool::new(false);
-        let mut generator = exec.evaluate(program.as_bytes(), &mut var_reg, readout, &_DUMMY);
+        let mut generator = exec.evaluate(program.as_bytes(), &mut var_reg, None, readout, &_DUMMY);
         loop {
             let Some(res) = generator() else {continue};
             drop(generator);
