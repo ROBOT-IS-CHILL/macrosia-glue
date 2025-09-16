@@ -12,8 +12,8 @@ crate-type = ["cdylib"]
 pyo3 = { version = "0.26", features = ["extension-module"] }
 pyo3-async-runtimes = { version = "0.26", features = ["attributes", "async-std-runtime"] }
 async-std = "1.13"
-macrosia = {path = "../macrosia", version = "0.1.5", features = ["catch-panic"]}
-#macrosia = {git = "https://github.com/ROBOT-IS-CHILL/macrosia.git", version = "0.1.5", features = ["catch-panic"]}
+macrosia = {path = "../macrosia", version = "0.1.6", features = ["catch-panic"]}
+#macrosia = {git = "https://github.com/ROBOT-IS-CHILL/macrosia.git", version = "0.1.6", features = ["catch-panic"]}
 rusqlite = {version = "0.37", features = ["bundled", "functions"] }
 itertools = "0.14"
 

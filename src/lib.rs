@@ -255,7 +255,7 @@ fn evaluate<'py>(
         let thread = std::thread::spawn(move || -> Result<Option<String>, MacroError> {
             LIMIT_ALLOCATIONS.store(true, Relaxed);
             EXECUTOR.clear_poison();
-            let mut exec = match EXECUTOR.try_write() {
+            let exec = match EXECUTOR.try_write() {
                 Ok(exec) => exec,
                 Err(TryLockError::WouldBlock) => return Ok(None),
                 Err(_) => return Err("executor is poisoned - this is a bug, please report!")?,
