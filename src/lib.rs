@@ -279,8 +279,11 @@ fn evaluate<'py>(
                 break res.map(|v| Some(String::from_utf8_lossy_owned(v.into_owned())));
             }
         });
-        std::thread::spawn(move || { std::thread::sleep(Duration::from_secs_f64(timeout)); KILL.store(true, Relaxed) });
+        static DONE: AtomicBool = AtomicBool::new(false);
+        DONE.store(false, SeqCst);
+        std::thread::spawn(move || { std::thread::sleep(Duration::from_secs_f64(timeout)); if DONE.load(SeqCst) { return } KILL.store(true, Relaxed) });
         let res = async move { thread.join() }.await;
+        DONE.store(true, SeqCst);
         LIMIT_ALLOCATIONS.store(false, Relaxed);
 
         match res {
@@ -303,18 +306,14 @@ fn evaluate<'py>(
 }
 
 #[pyfunction]
-fn get_builtins(py: Python) -> PyResult<Vec<Py<PyAny>>> {
+fn get_builtins(py: Python) -> PyResult<Py<PyDict>> {
     let mut exec = Executor::new(0);
     exec.add_stdlib();
-    let mut vec = vec![];
+    let dict = PyDict::new(py);
     for mac in exec.macros().values() {
-        let dict = PyDict::new(py);
-        dict.set_item("name", String::from_utf8_lossy(mac.name()).into_owned())?;
-        dict.set_item("description", mac.description().to_string())?;
-        dict.set_item("source", String::from_utf8_lossy(mac.source()).into_owned())?;
-        vec.push(dict.into());
+        dict.set_item(String::from_utf8_lossy(mac.name()).into_owned(), mac.description().to_string())?;
     }
-    Ok(vec)
+    Ok(dict.into())
 }
 
 #[pymodule]
