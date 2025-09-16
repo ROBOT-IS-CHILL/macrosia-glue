@@ -69,7 +69,7 @@ impl Macro for TilesMacro {
         &self,
         _x: &'exec macrosia::Executor,
         _v: &'reg mut VariableRegistry,
-        _r: &mut macrosia::rand::rngs::SmallRng,
+        _r: &mut macrosia::rand_xoshiro::Xoshiro128PlusPlus,
         args: &mut dyn Iterator<Item = &'arg [u8]>,
     ) -> Result<Cow<'static, [u8]>, MacroError> {
         let mut queries = args.map(str::from_utf8).process_results(|iter| {
