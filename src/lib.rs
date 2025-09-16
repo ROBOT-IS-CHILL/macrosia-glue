@@ -251,7 +251,6 @@ fn evaluate<'py>(
     debug_log: Option<Py<PyList>>,
 ) -> PyResult<Bound<'py, PyAny>> {
     let pin = Box::pin(async move {
-        LIMIT_ALLOCATIONS.store(true, Relaxed);
         static KILL: AtomicBool = AtomicBool::new(false);
         KILL.store(false, SeqCst);
         let thread = std::thread::spawn(move || -> Result<Option<String>, MacroError> {
@@ -282,6 +281,7 @@ fn evaluate<'py>(
         });
         std::thread::spawn(move || { std::thread::sleep(Duration::from_secs_f64(timeout)); KILL.store(true, Relaxed) });
         let res = async move { thread.join() }.await;
+        LIMIT_ALLOCATIONS.store(false, Relaxed);
 
         match res {
             Err(panic_payload) => {
