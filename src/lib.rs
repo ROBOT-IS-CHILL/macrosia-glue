@@ -13,16 +13,13 @@ use macrosia::{regex, Executor, Macro, MacroError, TextMacro, VariableRegistry};
 use pyo3::{exceptions::PyAssertionError, prelude::*, types::{PyDict, PyList, PyString}};
 use rusqlite::{params_from_iter, Connection};
 
-mod gil;
-use gil::AllowThreads;
-
 struct LimitAlloc;
 
 static MEMORY_LIMIT: usize = 8 * 1024 * 1024; // 8 MiB
 
 thread_local! {
-    static LIMIT_ALLOCATIONS: Cell<bool> = Cell::new(false);
-    static ALLOCATED_MEMORY: Cell<usize> = Cell::new(0);
+    static LIMIT_ALLOCATIONS: Cell<bool> = const { Cell::new(false) };
+    static ALLOCATED_MEMORY: Cell<usize> = const { Cell::new(0) };
 }
 
 unsafe impl GlobalAlloc for LimitAlloc {
@@ -45,7 +42,9 @@ unsafe impl GlobalAlloc for LimitAlloc {
         ptr
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
-        ALLOCATED_MEMORY.set(ALLOCATED_MEMORY.get() - layout.size());
+        if !ptr.is_null() {
+            ALLOCATED_MEMORY.set(ALLOCATED_MEMORY.get().saturating_sub(layout.size()));
+        }
         System.dealloc(ptr, layout);
     }
 }
