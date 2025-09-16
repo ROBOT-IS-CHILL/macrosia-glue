@@ -4,53 +4,55 @@ use itertools::Itertools;
 use std::{
     alloc::{GlobalAlloc, System},
     borrow::Cow,
-    cell::Cell,
     error::Error,
-    sync::{atomic::{AtomicBool, Ordering}, Arc, LazyLock, Mutex, OnceLock, RwLock, TryLockError}, time::Duration,
+    sync::{atomic::{AtomicBool, AtomicUsize, Ordering::*}, Arc, LazyLock, Mutex, OnceLock, RwLock, TryLockError}, time::Duration,
 };
 
 use macrosia::{regex, Executor, Macro, MacroError, TextMacro, VariableRegistry};
-use pyo3::{exceptions::PyAssertionError, prelude::*, types::{PyDict, PyList, PyString}};
+use pyo3::{exceptions::PyAssertionError, prelude::*, types::{PyDict, PyList}};
 use rusqlite::{params_from_iter, Connection};
-
-struct LimitAlloc;
 
 static MEMORY_LIMIT: usize = 8 * 1024 * 1024; // 8 MiB
 
-thread_local! {
-    static LIMIT_ALLOCATIONS: Cell<bool> = const { Cell::new(false) };
-    static ALLOCATED_MEMORY: Cell<usize> = const { Cell::new(0) };
-}
+struct LimitAlloc(AtomicUsize);
+
+static LIMIT_ALLOCATIONS: AtomicBool = AtomicBool::new(false);
 
 unsafe impl GlobalAlloc for LimitAlloc {
     unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
-        if LIMIT_ALLOCATIONS.get() {
-            let current = ALLOCATED_MEMORY.get();
-            let new = current.checked_add(layout.size());
-            if new.is_none_or(|v| v > MEMORY_LIMIT) {
-                LIMIT_ALLOCATIONS.set(false);
-                panic!("memory limit exhausted");
+        if LIMIT_ALLOCATIONS.load(Relaxed) {
+            let mut current = self.0.load(Relaxed);
+            loop {
+                let new = current.checked_add(layout.size());
+                if new.is_none_or(|v| v > MEMORY_LIMIT) {
+                    LIMIT_ALLOCATIONS.store(false, Relaxed);
+                    panic!("memory limit exhausted");
+                }
+                let new = new.unwrap();
+                match self.0.compare_exchange_weak(current, new, Relaxed, Relaxed) {
+                    Ok(_) => break,
+                    Err(x) => current = x,
+                }
             }
-            ALLOCATED_MEMORY.set(new.unwrap());
         } else {
-            ALLOCATED_MEMORY.set(ALLOCATED_MEMORY.get() + layout.size());
+            self.0.fetch_add(layout.size(), Relaxed);
         }
         let ptr = System.alloc(layout);
         if ptr.is_null() {
-            ALLOCATED_MEMORY.set(ALLOCATED_MEMORY.get() - layout.size());
+            self.0.fetch_sub(layout.size(), Relaxed);
         }
         ptr
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
         if !ptr.is_null() {
-            ALLOCATED_MEMORY.set(ALLOCATED_MEMORY.get().saturating_sub(layout.size()));
+            self.0.fetch_sub(layout.size(), Relaxed);
         }
         System.dealloc(ptr, layout);
     }
 }
 
 #[global_allocator]
-static ALLOC: LimitAlloc = LimitAlloc;
+static ALLOC: LimitAlloc = LimitAlloc(AtomicUsize::new(0));
 
 static DB_CONN: OnceLock<Mutex<Connection>> = OnceLock::new();
 
@@ -195,7 +197,7 @@ macro_rules! sql_py_err {
 #[pyfunction]
 fn update_macros(py: Python) -> PyResult<bool> {
     py.detach(|| {
-        LIMIT_ALLOCATIONS.set(false);
+        LIMIT_ALLOCATIONS.store(false, Relaxed);
         let Some(db) = DB_CONN.get() else {
             Err(PyAssertionError::new_err(
                 "The SQLite database has not been connected yet! Try again in a few moments.",
@@ -249,11 +251,11 @@ fn evaluate<'py>(
     debug_log: Option<Py<PyList>>,
 ) -> PyResult<Bound<'py, PyAny>> {
     let pin = Box::pin(async move {
-        LIMIT_ALLOCATIONS.set(true);
+        LIMIT_ALLOCATIONS.store(true, Relaxed);
         static KILL: AtomicBool = AtomicBool::new(false);
-        KILL.store(false, Ordering::SeqCst);
+        KILL.store(false, SeqCst);
         let thread = std::thread::spawn(move || -> Result<Option<String>, MacroError> {
-            LIMIT_ALLOCATIONS.set(true);
+            LIMIT_ALLOCATIONS.store(true, Relaxed);
             EXECUTOR.clear_poison();
             let exec = match EXECUTOR.try_read() {
                 Ok(exec) => exec,
@@ -278,9 +280,8 @@ fn evaluate<'py>(
                 break res.map(|v| Some(String::from_utf8_lossy_owned(v.into_owned())));
             }
         });
-        std::thread::spawn(move || { std::thread::sleep(Duration::from_secs_f64(timeout)); KILL.store(true, Ordering::Relaxed) });
+        std::thread::spawn(move || { std::thread::sleep(Duration::from_secs_f64(timeout)); KILL.store(true, Relaxed) });
         let res = async move { thread.join() }.await;
-        LIMIT_ALLOCATIONS.set(true);
 
         match res {
             Err(panic_payload) => {
