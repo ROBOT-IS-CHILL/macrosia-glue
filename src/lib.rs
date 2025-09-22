@@ -281,7 +281,7 @@ fn evaluate<'py>(
         static DONE: AtomicBool = AtomicBool::new(false);
         DONE.store(false, SeqCst);
         std::thread::spawn(move || { std::thread::sleep(Duration::from_secs_f64(timeout)); if DONE.load(SeqCst) { return } KILL.store(true, Relaxed) });
-        let res = async move { thread.join() }.await;
+        let res = async move { Python::attach(|py| py.detach(|| thread.join())) }.await;
         DONE.store(true, SeqCst);
         LIMIT_ALLOCATIONS.store(false, Relaxed);
 
@@ -306,7 +306,6 @@ fn evaluate<'py>(
 
 #[pyfunction]
 fn evaluate_sync<'py>(
-    py: Python<'py>,
     program: String,
     ctx: u8,
     debug_log: Option<Py<PyList>>,
@@ -314,7 +313,7 @@ fn evaluate_sync<'py>(
     let res = std::panic::catch_unwind(move || -> Result<Option<String>, MacroError> {
         LIMIT_ALLOCATIONS.store(true, Relaxed);
         EXECUTOR.clear_poison();
-        let mut exec = match EXECUTOR.try_write() {
+        let exec = match EXECUTOR.try_write() {
             Ok(exec) => exec,
             Err(TryLockError::WouldBlock) => return Ok(None),
             Err(_) => return Err("executor is poisoned - this is a bug, please report!")?,
