@@ -256,7 +256,7 @@ fn evaluate<'py>(
         static KILL: AtomicBool = AtomicBool::new(false);
         KILL.store(false, SeqCst);
         let thread = std::thread::Builder::new()
-            .name("Macro execution thread")
+            .name("Macro execution thread".into())
             .spawn(move || -> Result<Option<String>, MacroError> {
             LIMIT_ALLOCATIONS.store(true, Relaxed);
             EXECUTOR.clear_poison();
