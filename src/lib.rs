@@ -3,7 +3,7 @@
 use async_std::sync::Condvar;
 use itertools::Itertools;
 use std::{
-    alloc::{GlobalAlloc, System}, backtrace::Backtrace, borrow::Cow, error::Error, sync::{atomic::{AtomicBool, AtomicUsize, Ordering::*}, Arc, LazyLock, Mutex, OnceLock, RwLock, TryLockError}, time::Duration
+    alloc::{GlobalAlloc, System}, backtrace::Backtrace, borrow::Cow, error::Error, sync::{atomic::{AtomicBool, AtomicUsize, Ordering::*}, Arc, LazyLock, Mutex, OnceLock, RwLock, TryLockError}, time::{Duration, Instant}
 };
 
 use macrosia::{regex, Executor, Macro, MacroError, TextMacro, VariableRegistry};
@@ -250,8 +250,12 @@ fn evaluate<'py>(
     debug_log: Option<Py<PyList>>,
 ) -> PyResult<Bound<'py, PyAny>> {
     let pin = Box::pin(async move {
+        if !EXEC_FREE.load(SeqCst) {
+            return Ok(Some((false, "macro executor is currently in use".into(), None)))
+        }
         static KILL: AtomicBool = AtomicBool::new(false);
         KILL.store(false, SeqCst);
+        EXEC_FREE.store(false, SeqCst);
         let thread = std::thread::Builder::new()
             .name("Macro execution thread".into())
             .spawn(move || -> Result<Option<String>, MacroError>
@@ -287,10 +291,17 @@ fn evaluate<'py>(
                 return Ok(Some((false, format!("failed to spawn thread for macro execution: {err}"), None)))
             }
         };
-        EXEC_FREE.store(false, SeqCst);
         let tm_res = std::thread::Builder::new()
             .name("Timeout thread".into())
-            .spawn(move || { std::thread::sleep(Duration::from_secs_f64(timeout)); if EXEC_FREE.load(SeqCst) { return } KILL.store(true, Relaxed) });
+            .spawn(move || {
+                let now = Instant::now();
+                let timeout = Duration::from_secs_f64(timeout);
+                while Instant::now() - now < timeout {
+                    std::thread::sleep(Duration::from_millis(50));
+                    if EXEC_FREE.load(SeqCst) { return }
+                }
+                KILL.store(true, Relaxed)
+            });
         if let Err(err) = tm_res { KILL.store(true, Relaxed); return Ok(Some((false, format!("failed to spawn thread for timeout: {err}"), None)))}
         let res = async move { Python::attach(|py| py.detach(|| thread.join())) }.await;
         EXEC_FREE.store(true, SeqCst);
