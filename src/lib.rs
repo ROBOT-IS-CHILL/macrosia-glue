@@ -3,10 +3,7 @@
 use async_std::sync::Condvar;
 use itertools::Itertools;
 use std::{
-    alloc::{GlobalAlloc, System},
-    borrow::Cow,
-    error::Error,
-    sync::{atomic::{AtomicBool, AtomicUsize, Ordering::*}, Arc, LazyLock, Mutex, OnceLock, RwLock, TryLockError}, time::Duration,
+    alloc::{GlobalAlloc, System}, backtrace::Backtrace, borrow::Cow, error::Error, sync::{atomic::{AtomicBool, AtomicUsize, Ordering::*}, Arc, LazyLock, Mutex, OnceLock, RwLock, TryLockError}, time::Duration
 };
 
 use macrosia::{regex, Executor, Macro, MacroError, TextMacro, VariableRegistry};
@@ -257,7 +254,8 @@ fn evaluate<'py>(
         KILL.store(false, SeqCst);
         let thread = std::thread::Builder::new()
             .name("Macro execution thread".into())
-            .spawn(move || -> Result<Option<String>, MacroError> {
+            .spawn(move || -> Result<Option<String>, MacroError>
+        {
             LIMIT_ALLOCATIONS.store(true, Relaxed);
             EXECUTOR.clear_poison();
             let exec = match EXECUTOR.try_write() {
@@ -290,7 +288,10 @@ fn evaluate<'py>(
             }
         };
         EXEC_FREE.store(false, SeqCst);
-        std::thread::spawn(move || { std::thread::sleep(Duration::from_secs_f64(timeout)); if EXEC_FREE.load(SeqCst) { return } KILL.store(true, Relaxed) });
+        let tm_res = std::thread::Builder::new()
+            .name("Timeout thread".into())
+            .spawn(move || { std::thread::sleep(Duration::from_secs_f64(timeout)); if EXEC_FREE.load(SeqCst) { return } KILL.store(true, Relaxed) });
+        if let Err(err) = tm_res { KILL.store(true, Relaxed); return Ok(Some((false, format!("failed to spawn thread for timeout: {err}"), None)))}
         let res = async move { Python::attach(|py| py.detach(|| thread.join())) }.await;
         EXEC_FREE.store(true, SeqCst);
         LIMIT_ALLOCATIONS.store(false, Relaxed);
@@ -315,56 +316,6 @@ fn evaluate<'py>(
 }
 
 #[pyfunction]
-fn evaluate_sync<'py>(
-    program: String,
-    ctx: u8,
-    debug_log: Option<Py<PyList>>,
-) -> PyResult<Option<(bool, String, Option<Vec<String>>)>> {
-    let res = std::panic::catch_unwind(move || -> Result<Option<String>, MacroError> {
-        LIMIT_ALLOCATIONS.store(true, Relaxed);
-        EXECUTOR.clear_poison();
-        let exec = match EXECUTOR.try_write() {
-            Ok(exec) => exec,
-            Err(TryLockError::WouldBlock) => return Ok(None),
-            Err(_) => return Err("executor is poisoned - this is a bug, please report!")?,
-        };
-        exec.set_context(ctx);
-        let mut var_reg = VariableRegistry::new();
-        let mut debug_vec = vec![];
-        let readout = debug_log.as_ref().map(|_| &mut debug_vec);
-        static _DUMMY: AtomicBool = AtomicBool::new(false);
-        let mut generator = exec.evaluate(program.as_bytes(), &mut var_reg, None, readout, &_DUMMY);
-        loop {
-            let Some(res) = generator() else {continue};
-            drop(generator);
-            if let Some(log) = debug_log {
-                Python::attach(|py| {
-                    for str in debug_vec {
-                        log.call_method1(py, "append", (str as String, )).expect("failed to append to debug log");
-                    }
-                })
-            }
-            break res.map(|v| Some(String::from_utf8_lossy_owned(v.into_owned())));
-        }
-    });
-    match res {
-        Err(panic_payload) => {
-            if let Some(&"memory limit exhausted") =
-                panic_payload.downcast_ref::<&'static str>()
-            {
-                return Ok(Some((false, "memory limit exhausted during macro execution, but not during expansion".to_string(), None)));
-            }
-            std::panic::resume_unwind(panic_payload)
-        }
-        Ok(Err(macro_error)) => Ok(Some((false,
-            macro_error.message().to_string(),
-            Some(macro_error.trace().iter().map(|v| String::from_utf8_lossy(v).into_owned()).collect::<Vec<String>>())
-        ))),
-        Ok(Ok(res)) => Ok(res.map(|r| (true, r, None))),
-    }
-}
-
-#[pyfunction]
 fn get_builtins(py: Python) -> PyResult<Py<PyDict>> {
     let mut exec = Executor::new(0);
     exec.add_stdlib();
@@ -377,11 +328,21 @@ fn get_builtins(py: Python) -> PyResult<Py<PyDict>> {
 
 #[pymodule]
 fn macrosia_glue(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    std::panic::set_hook(Box::new(|_| {
+    std::panic::set_hook(Box::new(|f| {
+        let bt = Backtrace::force_capture();
         LIMIT_ALLOCATIONS.store(false, SeqCst);
+        let msg: &str;
+        if let Some(str) = f.payload().downcast_ref::<String>() {
+            msg = &*str ;
+        } else if let Some(str) = f.payload().downcast_ref::<&str>() {
+            msg = str;
+        } else {
+            msg = "<non-string panic payload>";
+        }
+        eprintln!("PANIC: {}", msg);
+        eprintln!("{bt}");
     }));
     m.add_function(wrap_pyfunction!(evaluate, m)?)?;
-    m.add_function(wrap_pyfunction!(evaluate_sync, m)?)?;
     m.add_function(wrap_pyfunction!(update_macros, m)?)?;
     m.add_function(wrap_pyfunction!(connect_to_db, m)?)?;
     m.add_function(wrap_pyfunction!(get_builtins, m)?)?;
