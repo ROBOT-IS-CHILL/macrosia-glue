@@ -1,5 +1,6 @@
 #![feature(once_cell_try, string_from_utf8_lossy_owned)]
 
+use async_std::sync::Condvar;
 use itertools::Itertools;
 use std::{
     alloc::{GlobalAlloc, System},
@@ -241,6 +242,8 @@ fn update_macros(py: Python) -> PyResult<bool> {
     })
 }
 
+static EXEC_FREE: AtomicBool = AtomicBool::new(false);
+
 #[pyfunction]
 fn evaluate<'py>(
     py: Python<'py>,
@@ -252,7 +255,9 @@ fn evaluate<'py>(
     let pin = Box::pin(async move {
         static KILL: AtomicBool = AtomicBool::new(false);
         KILL.store(false, SeqCst);
-        let thread = std::thread::spawn(move || -> Result<Option<String>, MacroError> {
+        let thread = std::thread::Builder::new()
+            .name("Macro execution thread")
+            .spawn(move || -> Result<Option<String>, MacroError> {
             LIMIT_ALLOCATIONS.store(true, Relaxed);
             EXECUTOR.clear_poison();
             let exec = match EXECUTOR.try_write() {
@@ -278,11 +283,16 @@ fn evaluate<'py>(
                 break res.map(|v| Some(String::from_utf8_lossy_owned(v.into_owned())));
             }
         });
-        static DONE: AtomicBool = AtomicBool::new(false);
-        DONE.store(false, SeqCst);
-        std::thread::spawn(move || { std::thread::sleep(Duration::from_secs_f64(timeout)); if DONE.load(SeqCst) { return } KILL.store(true, Relaxed) });
+        let thread = match thread {
+            Ok(t) => t,
+            Err(err) => {
+                return Ok(Some((false, format!("failed to spawn thread for macro execution: {err}"), None)))
+            }
+        };
+        EXEC_FREE.store(false, SeqCst);
+        std::thread::spawn(move || { std::thread::sleep(Duration::from_secs_f64(timeout)); if EXEC_FREE.load(SeqCst) { return } KILL.store(true, Relaxed) });
         let res = async move { Python::attach(|py| py.detach(|| thread.join())) }.await;
-        DONE.store(true, SeqCst);
+        EXEC_FREE.store(true, SeqCst);
         LIMIT_ALLOCATIONS.store(false, Relaxed);
 
         match res {
