@@ -239,7 +239,7 @@ fn update_macros(py: Python) -> PyResult<bool> {
     })
 }
 
-static EXEC_FREE: AtomicBool = AtomicBool::new(false);
+static EXEC_FREE: AtomicBool = AtomicBool::new(true);
 
 #[pyfunction]
 fn evaluate<'py>(
@@ -350,6 +350,7 @@ fn macrosia_glue(m: &Bound<'_, PyModule>) -> PyResult<()> {
         } else {
             msg = "<non-string panic payload>";
         }
+        EXEC_FREE.store(true, SeqCst);
         eprintln!("PANIC: {}", msg);
         eprintln!("{bt}");
     }));
