@@ -367,6 +367,9 @@ fn get_builtins(py: Python) -> PyResult<Py<PyDict>> {
 
 #[pymodule]
 fn macrosia_glue(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    std::panic::set_hook(Box::new(|_| {
+        LIMIT_ALLOCATIONS.store(false, SeqCst);
+    }));
     m.add_function(wrap_pyfunction!(evaluate, m)?)?;
     m.add_function(wrap_pyfunction!(evaluate_sync, m)?)?;
     m.add_function(wrap_pyfunction!(update_macros, m)?)?;
