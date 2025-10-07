@@ -12,14 +12,14 @@ use rusqlite::{params_from_iter, Connection};
 
 static MEMORY_LIMIT: usize = 8 * 1024 * 1024; // 8 MiB
 
-struct LimitAlloc(AtomicUsize);
+struct LimitAlloc(pub AtomicUsize);
 
 static LIMIT_ALLOCATIONS: AtomicBool = AtomicBool::new(false);
 
 unsafe impl GlobalAlloc for LimitAlloc {
     unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
         if LIMIT_ALLOCATIONS.load(Relaxed) {
-            let mut current = self.0.load(Relaxed);
+            let mut current = self.0.load(SeqCst);
             loop {
                 let new = current.checked_add(layout.size());
                 if new.is_none_or(|v| v > MEMORY_LIMIT) {
@@ -27,23 +27,23 @@ unsafe impl GlobalAlloc for LimitAlloc {
                     panic!("memory limit exhausted");
                 }
                 let new = new.unwrap();
-                match self.0.compare_exchange_weak(current, new, Relaxed, Relaxed) {
+                match self.0.compare_exchange_weak(current, new, SeqCst, SeqCst) {
                     Ok(_) => break,
                     Err(x) => current = x,
                 }
             }
         } else {
-            self.0.fetch_add(layout.size(), Relaxed);
+            self.0.fetch_add(layout.size(), SeqCst);
         }
         let ptr = System.alloc(layout);
         if ptr.is_null() {
-            self.0.fetch_sub(layout.size(), Relaxed);
+            self.0.fetch_sub(layout.size(), SeqCst);
         }
         ptr
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
         if !ptr.is_null() {
-            self.0.fetch_sub(layout.size(), Relaxed);
+            self.0.fetch_sub(layout.size(), SeqCst);
         }
         System.dealloc(ptr, layout);
     }
@@ -249,6 +249,9 @@ fn evaluate<'py>(
     timeout: f64,
     debug_log: Option<Py<PyList>>,
 ) -> PyResult<Bound<'py, PyAny>> {
+    // HACK - Terrible idea, but prod is broken right now.
+    ALLOC.0.fetch_update(SeqCst, SeqCst, |v| Some(v.min(4096))).unwrap();
+
     let pin = Box::pin(async move {
         if !EXEC_FREE.load(SeqCst) {
             return Ok(Some((false, "macro executor is currently in use".into(), None)))
