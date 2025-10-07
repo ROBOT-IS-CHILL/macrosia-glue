@@ -1,6 +1,5 @@
 #![feature(once_cell_try, string_from_utf8_lossy_owned)]
 
-use async_std::sync::Condvar;
 use itertools::Itertools;
 use std::{
     alloc::{GlobalAlloc, System}, backtrace::Backtrace, borrow::Cow, error::Error, sync::{atomic::{AtomicBool, AtomicUsize, Ordering::*}, Arc, LazyLock, Mutex, OnceLock, RwLock, TryLockError}, time::{Duration, Instant}
@@ -43,7 +42,7 @@ unsafe impl GlobalAlloc for LimitAlloc {
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
         if !ptr.is_null() {
-            self.0.fetch_sub(layout.size(), SeqCst);
+            self.0.fetch_update(SeqCst, SeqCst, |v| Some(v.saturating_sub(layout.size()))).unwrap();
         }
         System.dealloc(ptr, layout);
     }
