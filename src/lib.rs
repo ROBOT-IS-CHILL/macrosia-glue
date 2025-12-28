@@ -2,13 +2,15 @@
 
 use itertools::Itertools;
 use std::{
-    alloc::{GlobalAlloc, System}, backtrace::Backtrace, borrow::Cow, error::Error, sync::{atomic::{AtomicBool, AtomicUsize, Ordering::*}, Arc, LazyLock, Mutex, OnceLock, RwLock, TryLockError}, time::{Duration, Instant}
+    alloc::{GlobalAlloc, System}, backtrace::Backtrace, borrow::Cow, 
+    error::Error, sync::{atomic::{AtomicBool, AtomicUsize, Ordering::*}, Arc, LazyLock, Mutex, OnceLock, RwLock, TryLockError}, 
+    time::{Duration, Instant}, str::CharIndices
 };
 
 use macrosia::{regex, Executor, Macro, MacroError, TextMacro, VariableRegistry};
 use pyo3::{exceptions::PyAssertionError, prelude::*, types::{PyDict, PyList}};
 use rusqlite::{params_from_iter, Connection};
-use descape::UnescapeExt;
+use descape::{UnescapeExt, EscapeHandler, EscapeValue, DefaultEscapeHandler};
 
 static MEMORY_LIMIT: usize = 8 * 1024 * 1024; // 8 MiB
 
@@ -54,6 +56,12 @@ static ALLOC: LimitAlloc = LimitAlloc(AtomicUsize::new(0));
 
 static DB_CONN: OnceLock<Mutex<Connection>> = OnceLock::new();
 
+fn unescape<'a, 'b>(idx: usize, chr: char, iter: &'a mut CharIndices<'b>) -> Result<EscapeValue<'b>, ()> {
+    Ok(
+        DefaultEscapeHandler.escape(idx, chr, iter).unwrap_or(EscapeValue::Character(chr))
+    )
+}
+
 struct TilesMacro;
 
 impl Macro for TilesMacro {
@@ -94,7 +102,7 @@ impl Macro for TilesMacro {
             match query {
                 "name" => {
                     query_string.push_str(" AND name REGEXP ?");
-                    let value = value.to_unescaped().map_err(|v| format!("{v}"))?;
+                    let value = value.to_unescaped_with(unescape).map_err(|v| format!("{v}"))?;
                     args.push(rusqlite::types::Value::Text(format!("^{value}$")))
                 }
                 "tiling" => {
