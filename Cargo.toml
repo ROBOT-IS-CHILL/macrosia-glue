@@ -1,6 +1,6 @@
 [package]
 name = "macrosia-glue"
-version = "0.1.16"
+version = "0.1.17"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -15,6 +15,7 @@ async-std = "1.13"
 macrosia = {git = "https://github.com/ROBOT-IS-CHILL/macrosia.git", version = "0.3.0", features = ["catch-panic"]}
 rusqlite = {version = "0.37", features = ["bundled", "functions"] }
 itertools = "0.14"
+descape = "2"
 
 [profile.release]
 debug = true

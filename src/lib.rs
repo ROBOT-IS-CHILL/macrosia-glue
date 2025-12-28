@@ -8,6 +8,7 @@ use std::{
 use macrosia::{regex, Executor, Macro, MacroError, TextMacro, VariableRegistry};
 use pyo3::{exceptions::PyAssertionError, prelude::*, types::{PyDict, PyList}};
 use rusqlite::{params_from_iter, Connection};
+use descape::UnescapeExt;
 
 static MEMORY_LIMIT: usize = 8 * 1024 * 1024; // 8 MiB
 
@@ -93,24 +94,12 @@ impl Macro for TilesMacro {
             match query {
                 "name" => {
                     query_string.push_str(" AND name REGEXP ?");
+                    let value = value.to_unescaped().map_err(|v| format!("{v}"))?;
                     args.push(rusqlite::types::Value::Text(format!("^{value}$")))
                 }
                 "tiling" => {
-                    let tiling_int = match value {
-                        "icon" => -3,
-                        "custom" => -2,
-                        "none" => -1,
-                        "directional" => 0,
-                        "tiling" => 1,
-                        "character" => 2,
-                        "animated_directional" => 3,
-                        "animated" => 4,
-                        "static_character" => 5,
-                        "diagonal_tiling" => 6,
-                        _ => return Err(format!("invalid tiling mode: {value}"))?,
-                    };
                     query_string.push_str(" AND tiling == ?");
-                    args.push(rusqlite::types::Value::Integer(tiling_int))
+                    args.push(rusqlite::types::Value::Text(value.to_string()))
                 }
                 "source" => {
                     query_string.push_str(" AND source == ?");
