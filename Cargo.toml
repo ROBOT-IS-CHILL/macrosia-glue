@@ -1,6 +1,6 @@
 [package]
 name = "macrosia-glue"
-version = "0.1.21"
+version = "0.1.22"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -9,8 +9,8 @@ name = "macrosia_glue"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.26", features = ["extension-module"] }
-pyo3-async-runtimes = { version = "0.26", features = ["attributes", "async-std-runtime"] }
+pyo3 = { version = "0.29", features = ["extension-module"] }
+pyo3-async-runtimes = { version = "0.29", features = ["attributes", "async-std-runtime"] }
 async-std = "1.13"
 macrosia = {git = "https://github.com/ROBOT-IS-CHILL/macrosia.git", version = "0.4.2", features = ["catch-panic"]}
 rusqlite = {version = "0.37", features = ["bundled", "functions"] }
