@@ -11,6 +11,7 @@ use macrosia::{regex, Executor, Macro, MacroError, TextMacro, VariableRegistry};
 use pyo3::{exceptions::PyAssertionError, prelude::*, types::{PyDict, PyList}};
 use rusqlite::{params_from_iter, Connection};
 use descape::{UnescapeExt, EscapeHandler, EscapeValue, DefaultEscapeHandler};
+use mimalloc::MiMalloc;
 
 static MEMORY_LIMIT: usize = 8 * 1024 * 1024; // 8 MiB
 
@@ -21,7 +22,7 @@ static LIMIT_ALLOCATIONS: AtomicBool = AtomicBool::new(false);
 unsafe impl GlobalAlloc for LimitAlloc {
     unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
         if LIMIT_ALLOCATIONS.load(Relaxed) {
-            let mut current = self.0.load(SeqCst);
+            let mut current = self.0.load(Relaxed);
             loop {
                 let new = current.checked_add(layout.size());
                 if new.is_none_or(|v| v > MEMORY_LIMIT) {
@@ -29,25 +30,25 @@ unsafe impl GlobalAlloc for LimitAlloc {
                     panic!("memory limit exhausted");
                 }
                 let new = new.unwrap();
-                match self.0.compare_exchange_weak(current, new, SeqCst, SeqCst) {
+                match self.0.compare_exchange_weak(current, new, Relaxed, Relaxed) {
                     Ok(_) => break,
                     Err(x) => current = x,
                 }
             }
         } else {
-            self.0.fetch_add(layout.size(), SeqCst);
+            self.0.fetch_add(layout.size(), Relaxed);
         }
-        let ptr = System.alloc(layout);
+        let ptr = MiMalloc.alloc(layout);
         if ptr.is_null() {
-            self.0.fetch_sub(layout.size(), SeqCst);
+            self.0.fetch_sub(layout.size(), Relaxed);
         }
         ptr
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
         if !ptr.is_null() {
-            self.0.fetch_update(SeqCst, SeqCst, |v| Some(v.saturating_sub(layout.size()))).unwrap();
+            self.0.fetch_update(Relaxed, Relaxed, |v| Some(v.saturating_sub(layout.size()))).unwrap();
         }
-        System.dealloc(ptr, layout);
+        MiMalloc.dealloc(ptr, layout);
     }
 }
 
